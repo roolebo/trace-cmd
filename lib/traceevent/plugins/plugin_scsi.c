@@ -150,6 +150,24 @@ typedef unsigned int u32;
 #define SERVICE_ACTION16(cdb) (cdb[1] & 0x1f)
 #define SERVICE_ACTION32(cdb) ((cdb[8] << 8) | cdb[9])
 
+static const unsigned char scsi_command_size_tbl[8] =
+{
+	6, 10, 10, 12,
+	16, 12, 10, 10
+};
+
+#define COMMAND_SIZE(opcode) scsi_command_size_tbl[((opcode) >> 5) & 7]
+
+/* defined in T10 SCSI Primary Commands-2 (SPC2) */
+struct scsi_varlen_cdb_hdr {
+	uint8_t opcode;        /* opcode always == VARIABLE_LENGTH_CMD */
+	uint8_t control;
+	uint8_t misc[5];
+	uint8_t additional_cdb_length;         /* total cdb length - 8 */
+	uint16_t service_action;
+	/* service specific data follows */
+};
+
 static const char *
 scsi_trace_misc(struct trace_seq *, unsigned char *, int);
 
@@ -414,6 +432,20 @@ unsigned long long process_scsi_trace_parse_cdb(struct trace_seq *s,
 	return 0;
 }
 
+static unsigned
+scsi_varlen_cdb_length(const void *hdr)
+{
+	return ((struct scsi_varlen_cdb_hdr *)hdr)->additional_cdb_length + 8;
+}
+
+static unsigned long long
+process_scsi_command_size(struct trace_seq *s, unsigned long long *args)
+{
+	unsigned char *cmnd = (unsigned char *) args[0];
+	return (cmnd[0] == VARIABLE_LENGTH_CMD) ?
+		scsi_varlen_cdb_length(cmnd) : COMMAND_SIZE(cmnd[0]);
+}
+
 int TEP_PLUGIN_LOADER(struct tep_handle *tep)
 {
 	tep_register_print_function(tep,
@@ -424,11 +456,22 @@ int TEP_PLUGIN_LOADER(struct tep_handle *tep)
 				    TEP_FUNC_ARG_PTR,
 				    TEP_FUNC_ARG_INT,
 				    TEP_FUNC_ARG_VOID);
+
+	tep_register_print_function(tep,
+				    process_scsi_command_size,
+				    TEP_FUNC_ARG_INT,
+				    "scsi_command_size",
+				    TEP_FUNC_ARG_PTR,
+				    TEP_FUNC_ARG_VOID);
+
 	return 0;
 }
 
 void TEP_PLUGIN_UNLOADER(struct tep_handle *tep)
 {
+	tep_unregister_print_function(tep, process_scsi_command_size,
+				      "scsi_command_size");
+
 	tep_unregister_print_function(tep, process_scsi_trace_parse_cdb,
 				      "scsi_trace_parse_cdb");
 }
